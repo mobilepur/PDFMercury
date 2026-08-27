@@ -126,22 +126,28 @@ public struct PDFVisualReportGenerator: Sendable {
   func cellRect(for slot: Int) -> CGRect {
     let column = slot % Layout.columns
     let row = slot / Layout.columns
-    let availableWidth =
+    let contentWidth =
       Layout.reportBounds.width
       - (2 * Layout.margin)
-      - (CGFloat(Layout.columns - 1) * Layout.gap)
-    let availableHeight =
+    let contentHeight =
       Layout.reportBounds.height
       - (2 * Layout.margin)
       - Layout.headerHeight
+    let availableWidth =
+      contentWidth
+      - (CGFloat(Layout.columns - 1) * Layout.gap)
+    let availableHeight =
+      contentHeight
       - (CGFloat(Layout.rows - 1) * Layout.gap)
     let cellSize = min(
       availableWidth / CGFloat(Layout.columns),
       availableHeight / CGFloat(Layout.rows)
     )
+    let gridWidth = CGFloat(Layout.columns) * cellSize + CGFloat(Layout.columns - 1) * Layout.gap
     let gridHeight = CGFloat(Layout.rows) * cellSize + CGFloat(Layout.rows - 1) * Layout.gap
-    let gridOriginY = Layout.margin + (availableHeight + Layout.gap - gridHeight) / 2
-    let x = Layout.margin + CGFloat(column) * (cellSize + Layout.gap)
+    let gridOriginX = Layout.margin + (contentWidth - gridWidth) / 2
+    let gridOriginY = Layout.margin + (contentHeight - gridHeight) / 2
+    let x = gridOriginX + CGFloat(column) * (cellSize + Layout.gap)
     let y = gridOriginY + CGFloat(Layout.rows - row - 1) * (cellSize + Layout.gap)
     return CGRect(x: x, y: y, width: cellSize, height: cellSize)
   }
@@ -288,10 +294,10 @@ private struct SourcePage {
 }
 
 private enum Layout {
-  static let columns = 4
-  static let rows = 2
+  static let columns = 2
+  static let rows = 4
   static let previewsPerPage = columns * rows
-  static let reportBounds = CGRect(x: 0, y: 0, width: 841.89, height: 595.28)
+  static let reportBounds = CGRect(x: 0, y: 0, width: 595.28, height: 841.89)
   static let margin: CGFloat = 20
   static let gap: CGFloat = 10
   static let headerHeight: CGFloat = 24

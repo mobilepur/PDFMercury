@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-  name: "PDFMercury",
+  name: "pdf-mercury",
   platforms: [
     .iOS(.v15),
     .macOS(.v12),

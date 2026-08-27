@@ -3,15 +3,14 @@ import Foundation
 import PDFMercury
 import Testing
 
-@Suite("HTML and CSS PDF rendering")
+@Suite("Visual HTML and CSS rendering")
+@MainActor
 struct PDFMercuryRenderingTests {
-  @Test("renders inline HTML with inline CSS")
-  func rendersInlineHTMLAndCSS() async throws {
-    let html = HTMLSource.string(
-      try fixtureString("inline-card.html")
-    )
+  @Test("renders a solid portrait page")
+  func rendersSolidPortraitPage() async throws {
+    let html = HTMLSource.string(try fixtureString("solid-portrait.html"))
     let stylesheets: [CSSSource] = [
-      .string(try fixtureString("inline-card.css"))
+      .string(try fixtureString("solid-portrait.css"))
     ]
 
     let pdf = try await RenderEngine().render(
@@ -19,14 +18,14 @@ struct PDFMercuryRenderingTests {
       stylesheets: stylesheets
     )
 
-    try verifyAndArchive(pdf, as: "01-inline-html-css.pdf")
+    try verifyAndArchive(pdf, as: "01-solid-portrait.pdf")
   }
 
-  @Test("renders HTML and CSS files with relative assets")
-  func rendersFilesWithRelativeAssets() async throws {
-    let html = HTMLSource.file(try fixtureURL("company-profile.html"))
+  @Test("renders a solid landscape page")
+  func rendersSolidLandscapePage() async throws {
+    let html = HTMLSource.file(try fixtureURL("solid-landscape.html"))
     let stylesheets: [CSSSource] = [
-      .file(try fixtureURL("company-profile.css"))
+      .file(try fixtureURL("solid-landscape.css"))
     ]
 
     let pdf = try await RenderEngine().render(
@@ -34,18 +33,14 @@ struct PDFMercuryRenderingTests {
       stylesheets: stylesheets
     )
 
-    try verifyAndArchive(pdf, as: "02-file-html-css-assets.pdf")
+    try verifyAndArchive(pdf, as: "02-solid-landscape.pdf")
   }
 
-  @Test("resolves a local image relative to the HTML base URL")
-  func resolvesLocalAssetFromBaseURL() async throws {
-    let fixtures = try fixturesDirectory()
-    let html = HTMLSource.string(
-      try fixtureString("company-profile.html"),
-      baseURL: fixtures
-    )
+  @Test("renders a multi-page Lorem Ipsum document")
+  func rendersMultiPageLoremIpsumDocument() async throws {
+    let html = HTMLSource.file(try fixtureURL("lorem-ipsum-multipage.html"))
     let stylesheets: [CSSSource] = [
-      .string(try fixtureString("company-profile.css"))
+      .file(try fixtureURL("lorem-ipsum-multipage.css"))
     ]
 
     let pdf = try await RenderEngine().render(
@@ -53,24 +48,11 @@ struct PDFMercuryRenderingTests {
       stylesheets: stylesheets
     )
 
-    try verifyAndArchive(pdf, as: "03-html-base-url-local-asset.pdf")
-  }
-
-  @Test("paginates HTML into multiple PDF pages")
-  func paginatesHTML() async throws {
-    let html = HTMLSource.string(
-      try fixtureString("pagination.html")
+    try verifyAndArchive(
+      pdf,
+      as: "03-lorem-ipsum-multipage.pdf",
+      expectedPageCount: 3
     )
-    let stylesheets: [CSSSource] = [
-      .string(try fixtureString("pagination.css"))
-    ]
-
-    let pdf = try await RenderEngine().render(
-      html: html,
-      stylesheets: stylesheets
-    )
-
-    try verifyAndArchive(pdf, as: "04-pagination.pdf", expectedPageCount: 3)
   }
 
   private func verifyAndArchive(
@@ -78,8 +60,7 @@ struct PDFMercuryRenderingTests {
     as filename: String,
     expectedPageCount: Int? = nil
   ) throws {
-    let outputDirectory = repositoryRoot()
-      .appendingPathComponent(".build/pdfmercury-visual-input", isDirectory: true)
+    let outputDirectory = visualOutputDirectory()
     try FileManager.default.createDirectory(
       at: outputDirectory,
       withIntermediateDirectories: true
@@ -117,5 +98,21 @@ struct PDFMercuryRenderingTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .deletingLastPathComponent()
+  }
+
+  private func visualOutputDirectory() -> URL {
+    #if os(iOS)
+      return FileManager.default.temporaryDirectory
+        .appendingPathComponent("pdfmercury-visual-input", isDirectory: true)
+    #else
+      if let configuredPath = ProcessInfo.processInfo.environment[
+        "PDFMERCURY_VISUAL_INPUT_DIRECTORY"
+      ] {
+        return URL(fileURLWithPath: configuredPath, isDirectory: true)
+      }
+
+      return repositoryRoot()
+        .appendingPathComponent(".build/pdfmercury-visual-input", isDirectory: true)
+    #endif
   }
 }
