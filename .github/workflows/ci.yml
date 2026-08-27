@@ -16,3 +16,12 @@ jobs:
         uses: actions/checkout@v4
       - name: Build package
         run: swift build
+      - name: Test package
+        run: swift test
+      - name: Build PDFMercury for iOS Simulator
+        run: >-
+          xcodebuild -quiet
+          -scheme PDFMercury
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build

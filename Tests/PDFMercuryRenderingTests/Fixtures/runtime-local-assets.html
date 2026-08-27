@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Lokale Runtime-Assets - mobilepur</title>
+</head>
+<body>
+  <main>
+    <header>
+      <img src="runtime-assets/company-logo.svg" alt="mobilepur Firmenlogo">
+      <span>Expected: HTML base URL + CSS file assets</span>
+    </header>
+
+    <p class="eyebrow">PDF Mercury · Runtime Assets</p>
+    <h1>Lokale Dateien.<br>Direkt vom Gerät.</h1>
+    <p class="lead">Das Firmenlogo wird relativ zur HTML-baseURL geladen. Die farbige Fläche darunter stammt aus einem SVG, das relativ zur CSS-Datei liegt.</p>
+
+    <section class="asset-card">
+      <div class="css-asset" role="img" aria-label="Farbige CSS-Asset-Grafik"></div>
+      <div>
+        <strong>CSS FILE ASSET</strong>
+        <p>Wenn links eine violett-grüne Grafik sichtbar ist, wurde <code>url(...)</code> relativ zur CSS-Datei aufgelöst.</p>
+      </div>
+    </section>
+
+    <footer>
+      <span>HTML ASSET: EXPECTED VISIBLE</span>
+      <span>CSS ASSET: EXPECTED VISIBLE</span>
+    </footer>
+  </main>
+</body>
+</html>

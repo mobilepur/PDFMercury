@@ -1,0 +1,21 @@
+@page {
+  size: A4 portrait;
+  margin: 64px 62px 72px;
+}
+
+body {
+  border-top: 0;
+}
+
+article {
+  padding: 0;
+}
+
+.document-type {
+  font-size: 0;
+}
+
+.document-type::after {
+  content: "Expected: padding and intact text lines";
+  font-size: 10px;
+}
