@@ -1,0 +1,60 @@
+@page {
+  size: A4;
+  margin: 22mm;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #172033;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 28px;
+  border-bottom: 2px solid #d8d2e8;
+}
+
+.logo {
+  width: 180px;
+}
+
+.tagline {
+  color: #6750a4;
+  font-weight: 700;
+}
+
+main {
+  padding-top: 40px;
+}
+
+h1 {
+  font-size: 34px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-top: 40px;
+}
+
+dl div {
+  padding: 20px;
+  background: #f4efff;
+  border-radius: 12px;
+}
+
+dt {
+  color: #6750a4;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+dd {
+  margin: 8px 0 0;
+  font-size: 20px;
+}

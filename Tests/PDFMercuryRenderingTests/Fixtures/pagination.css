@@ -1,0 +1,32 @@
+@page {
+  size: A4;
+  margin: 0;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 24mm;
+  break-after: page;
+}
+
+.page:last-child {
+  break-after: auto;
+}
+
+.first {
+  background: #f4efff;
+}
+
+.second {
+  background: #e8f5e9;
+}
+
+.third {
+  background: #fff3e0;
+}
