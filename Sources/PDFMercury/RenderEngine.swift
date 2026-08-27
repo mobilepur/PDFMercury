@@ -35,14 +35,17 @@ public final class RenderEngine {
       )
     )
 
+    let textLineRanges = try await textLineRanges(in: webView)
+    let pageSlices = pageSlices(
+      contentHeight: contentHeight,
+      pageSize: contentPageRect.size,
+      textLineRanges: textLineRanges
+    )
     var pages: [Data] = []
-    pages.reserveCapacity(pageCount)
-    for pageIndex in 0..<pageCount {
+    pages.reserveCapacity(pageSlices.count)
+    for pageSlice in pageSlices {
       let configuration = WKPDFConfiguration()
-      configuration.rect = contentPageRect.offsetBy(
-        dx: 0,
-        dy: CGFloat(pageIndex) * contentPageRect.height
-      )
+      configuration.rect = pageSlice
       pages.append(try await webView.pdf(configuration: configuration))
     }
 
@@ -50,6 +53,88 @@ public final class RenderEngine {
   }
 
   private static let pageBoundaryTolerance: CGFloat = 0.5
+
+  private func textLineRanges(in webView: WKWebView) async throws -> [VerticalRange] {
+    let script = """
+      (() => {
+        const ranges = [];
+        const walker = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT
+        );
+
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (!node.textContent || !node.textContent.trim()) continue;
+
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          for (const rect of range.getClientRects()) {
+            if (rect.width > 0 && rect.height > 0) {
+              ranges.push([
+                rect.top + window.scrollY,
+                rect.bottom + window.scrollY
+              ]);
+            }
+          }
+        }
+
+        return ranges;
+      })()
+      """
+    let result = try await webView.evaluateJavaScript(script)
+    guard let values = result as? [[NSNumber]] else {
+      throw PDFMercuryError.invalidRenderedPDF
+    }
+    return values.compactMap { value in
+      guard value.count == 2 else { return nil }
+      return VerticalRange(
+        minY: CGFloat(value[0].doubleValue),
+        maxY: CGFloat(value[1].doubleValue)
+      )
+    }
+  }
+
+  private func pageSlices(
+    contentHeight: CGFloat,
+    pageSize: CGSize,
+    textLineRanges: [VerticalRange]
+  ) -> [CGRect] {
+    var slices: [CGRect] = []
+    var startY: CGFloat = 0
+
+    while contentHeight - startY > Self.pageBoundaryTolerance {
+      let maximumEndY = min(startY + pageSize.height, contentHeight)
+      var endY = maximumEndY
+      let crossingLineStart =
+        textLineRanges
+        .filter { $0.minY < maximumEndY && $0.maxY > maximumEndY }
+        .map(\.minY)
+        .min()
+
+      if maximumEndY < contentHeight,
+        let safeEndY = crossingLineStart,
+        safeEndY - startY > Self.pageBoundaryTolerance
+      {
+        endY = safeEndY
+      }
+
+      slices.append(
+        CGRect(
+          x: 0,
+          y: startY,
+          width: pageSize.width,
+          height: endY - startY
+        )
+      )
+      startY = endY
+    }
+
+    if slices.isEmpty {
+      slices.append(CGRect(origin: .zero, size: pageSize))
+    }
+    return slices
+  }
 
   private func contentHeight(in webView: WKWebView) async throws -> CGFloat {
     let script = """
@@ -88,9 +173,11 @@ public final class RenderEngine {
 
       context.beginPDFPage(nil)
       context.saveGState()
+      let renderedPageRect = page.getBoxRect(.mediaBox)
+      context.clip(to: pageLayout.contentRect)
       context.translateBy(
-        x: pageLayout.contentRect.minX,
-        y: pageLayout.contentRect.minY
+        x: pageLayout.contentRect.minX - renderedPageRect.minX,
+        y: pageLayout.contentRect.maxY - renderedPageRect.maxY
       )
       context.drawPDFPage(page)
       context.restoreGState()
@@ -100,6 +187,11 @@ public final class RenderEngine {
     context.closePDF()
     return output as Data
   }
+}
+
+private struct VerticalRange {
+  let minY: CGFloat
+  let maxY: CGFloat
 }
 
 private struct RenderDocument {

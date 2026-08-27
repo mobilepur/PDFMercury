@@ -74,7 +74,7 @@ struct PDFMercuryRenderingTests {
     )
   }
 
-  @Test("expected: applies page padding on every page")
+  @Test("expected: applies page padding and keeps text lines intact")
   func rendersNaturallyFlowingTextWithPagePadding() async throws {
     let html = HTMLSource.file(try fixtureURL("flowing-lorem-ipsum.html"))
     let stylesheets: [CSSSource] = [
@@ -89,7 +89,7 @@ struct PDFMercuryRenderingTests {
 
     try verifyAndArchive(
       pdf,
-      as: "05-expected-padding-on-every-page.pdf",
+      as: "05-expected-padding-and-intact-lines.pdf",
       minimumPageCount: 2
     )
   }

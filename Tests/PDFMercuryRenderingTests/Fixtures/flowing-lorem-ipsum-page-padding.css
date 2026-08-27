@@ -16,6 +16,6 @@ article {
 }
 
 .document-type::after {
-  content: "Expected: page padding on every page";
+  content: "Expected: padding and intact text lines";
   font-size: 10px;
 }
