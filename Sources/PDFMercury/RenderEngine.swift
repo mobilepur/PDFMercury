@@ -11,8 +11,9 @@ public final class RenderEngine {
     stylesheets: [CSSSource] = []
   ) async throws -> Data {
     let document = try RenderDocument(html: source, stylesheets: stylesheets)
-    let pageRect = document.pageRect
-    let webView = WKWebView(frame: pageRect)
+    let pageLayout = document.pageLayout
+    let contentPageRect = CGRect(origin: .zero, size: pageLayout.contentRect.size)
+    let webView = WKWebView(frame: contentPageRect)
     let navigationObserver = WebViewNavigationObserver()
 
     try await navigationObserver.load(
@@ -24,13 +25,13 @@ public final class RenderEngine {
     let contentHeight = try await contentHeight(in: webView)
     let pageCount = max(
       1,
-      Int(ceil((contentHeight - Self.pageBoundaryTolerance) / pageRect.height))
+      Int(ceil((contentHeight - Self.pageBoundaryTolerance) / contentPageRect.height))
     )
     webView.frame = CGRect(
       origin: .zero,
       size: CGSize(
-        width: pageRect.width,
-        height: CGFloat(pageCount) * pageRect.height
+        width: contentPageRect.width,
+        height: CGFloat(pageCount) * contentPageRect.height
       )
     )
 
@@ -38,14 +39,14 @@ public final class RenderEngine {
     pages.reserveCapacity(pageCount)
     for pageIndex in 0..<pageCount {
       let configuration = WKPDFConfiguration()
-      configuration.rect = pageRect.offsetBy(
+      configuration.rect = contentPageRect.offsetBy(
         dx: 0,
-        dy: CGFloat(pageIndex) * pageRect.height
+        dy: CGFloat(pageIndex) * contentPageRect.height
       )
       pages.append(try await webView.pdf(configuration: configuration))
     }
 
-    return try combine(pages, pageRect: pageRect)
+    return try combine(pages, pageLayout: pageLayout)
   }
 
   private static let pageBoundaryTolerance: CGFloat = 0.5
@@ -66,12 +67,12 @@ public final class RenderEngine {
     return CGFloat(number.doubleValue)
   }
 
-  private func combine(_ pages: [Data], pageRect: CGRect) throws -> Data {
+  private func combine(_ pages: [Data], pageLayout: PageLayout) throws -> Data {
     let output = NSMutableData()
     guard let consumer = CGDataConsumer(data: output as CFMutableData) else {
       throw PDFMercuryError.couldNotCreatePDF
     }
-    var mediaBox = pageRect
+    var mediaBox = pageLayout.pageRect
     guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
       throw PDFMercuryError.couldNotCreatePDF
     }
@@ -86,7 +87,13 @@ public final class RenderEngine {
       }
 
       context.beginPDFPage(nil)
+      context.saveGState()
+      context.translateBy(
+        x: pageLayout.contentRect.minX,
+        y: pageLayout.contentRect.minY
+      )
       context.drawPDFPage(page)
+      context.restoreGState()
       context.endPDFPage()
     }
 
@@ -98,16 +105,16 @@ public final class RenderEngine {
 private struct RenderDocument {
   let html: String
   let baseURL: URL?
-  let pageRect: CGRect
+  let pageLayout: PageLayout
 
   init(html source: HTMLSource, stylesheets: [CSSSource]) throws {
     let resolvedHTML = try Self.resolve(source)
     let resolvedStylesheets = try stylesheets.map(Self.resolve)
-    let resolvedPageRect = Self.pageRect(
+    let resolvedPageLayout = Self.pageLayout(
       for: resolvedStylesheets.map(\.contents).joined(separator: "\n")
     )
     let viewport = """
-      <meta name="viewport" content="width=\(resolvedPageRect.width), initial-scale=1.0">
+      <meta name="viewport" content="width=\(resolvedPageLayout.contentRect.width), initial-scale=1.0">
       """
 
     html = Self.inject(
@@ -115,7 +122,7 @@ private struct RenderDocument {
       into: resolvedHTML.contents
     )
     baseURL = resolvedHTML.baseURL
-    pageRect = resolvedPageRect
+    pageLayout = resolvedPageLayout
   }
 
   private static func resolve(_ source: HTMLSource) throws -> ResolvedHTML {
@@ -162,28 +169,152 @@ private struct RenderDocument {
     return result
   }
 
-  private static func pageRect(for css: String) -> CGRect {
+  private static func pageLayout(for css: String) -> PageLayout {
     let a4Portrait = CGSize(width: 595.28, height: 841.89)
-    let orientation = pageDeclaration(in: css)?.contains("landscape") == true
+    var orientation = PageOrientation.portrait
+    var margins = PageMargins.zero
+
+    for pageRule in pageDeclarations(in: css) {
+      for declaration in declarations(in: pageRule) {
+        switch declaration.name {
+        case "size":
+          orientation = declaration.value.contains("landscape") ? .landscape : .portrait
+        case "margin":
+          if let resolvedMargins = PageMargins(cssValue: declaration.value) {
+            margins = resolvedMargins
+          }
+        case "margin-top":
+          margins.top = cssLength(declaration.value) ?? margins.top
+        case "margin-right":
+          margins.right = cssLength(declaration.value) ?? margins.right
+        case "margin-bottom":
+          margins.bottom = cssLength(declaration.value) ?? margins.bottom
+        case "margin-left":
+          margins.left = cssLength(declaration.value) ?? margins.left
+        default:
+          break
+        }
+      }
+    }
+
     let size =
-      orientation
+      orientation == .landscape
       ? CGSize(width: a4Portrait.height, height: a4Portrait.width)
       : a4Portrait
-    return CGRect(origin: .zero, size: size)
+    return PageLayout(pageSize: size, margins: margins)
   }
 
-  private static func pageDeclaration(in css: String) -> String? {
+  private static func pageDeclarations(in css: String) -> [String] {
     let lowercaseCSS = css.lowercased()
-    guard let pageRule = lowercaseCSS.range(of: "@page") else { return nil }
-    guard
+    var rules: [String] = []
+    var searchStart = lowercaseCSS.startIndex
+
+    while let pageRule = lowercaseCSS.range(
+      of: "@page",
+      range: searchStart..<lowercaseCSS.endIndex
+    ),
       let openingBrace = lowercaseCSS[pageRule.upperBound...].firstIndex(of: "{"),
       let closingBrace = lowercaseCSS[openingBrace...].firstIndex(of: "}")
-    else {
-      return nil
+    {
+      rules.append(String(lowercaseCSS[openingBrace...closingBrace]))
+      searchStart = lowercaseCSS.index(after: closingBrace)
     }
-    return String(lowercaseCSS[openingBrace...closingBrace])
+
+    return rules
   }
 
+  private static func declarations(in pageRule: String) -> [(name: String, value: String)] {
+    pageRule
+      .dropFirst()
+      .dropLast()
+      .split(separator: ";")
+      .compactMap { declaration in
+        guard let separator = declaration.firstIndex(of: ":") else { return nil }
+        let name = declaration[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = declaration[declaration.index(after: separator)...]
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (name, value)
+      }
+  }
+
+  fileprivate static func cssLength(_ value: String) -> CGFloat? {
+    let value = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if value == "0" { return 0 }
+
+    let units: [(suffix: String, factor: Double)] = [
+      ("px", 1),
+      ("pt", 96 / 72),
+      ("in", 96),
+      ("cm", 96 / 2.54),
+      ("mm", 96 / 25.4),
+    ]
+    guard let unit = units.first(where: { value.hasSuffix($0.suffix) }) else {
+      return nil
+    }
+    guard let number = Double(value.dropLast(unit.suffix.count)), number >= 0 else {
+      return nil
+    }
+    return CGFloat(number * unit.factor)
+  }
+}
+
+private enum PageOrientation {
+  case portrait
+  case landscape
+}
+
+private struct PageLayout {
+  let pageRect: CGRect
+  let contentRect: CGRect
+
+  init(pageSize: CGSize, margins: PageMargins) {
+    pageRect = CGRect(origin: .zero, size: pageSize)
+    contentRect = CGRect(
+      x: margins.left,
+      y: margins.bottom,
+      width: max(1, pageSize.width - margins.left - margins.right),
+      height: max(1, pageSize.height - margins.top - margins.bottom)
+    )
+  }
+}
+
+private struct PageMargins {
+  var top: CGFloat
+  var right: CGFloat
+  var bottom: CGFloat
+  var left: CGFloat
+
+  static let zero = PageMargins(top: 0, right: 0, bottom: 0, left: 0)
+
+  init?(cssValue: String) {
+    let values =
+      cssValue
+      .split(whereSeparator: \.isWhitespace)
+      .compactMap { RenderDocument.cssLength(String($0)) }
+    guard values.count == cssValue.split(whereSeparator: \.isWhitespace).count else {
+      return nil
+    }
+
+    switch values.count {
+    case 1:
+      self.init(top: values[0], right: values[0], bottom: values[0], left: values[0])
+    case 2:
+      self.init(top: values[0], right: values[1], bottom: values[0], left: values[1])
+    case 3:
+      self.init(top: values[0], right: values[1], bottom: values[2], left: values[1])
+    case 4:
+      self.init(top: values[0], right: values[1], bottom: values[2], left: values[3])
+    default:
+      return nil
+    }
+  }
+
+  private init(top: CGFloat, right: CGFloat, bottom: CGFloat, left: CGFloat) {
+    self.top = top
+    self.right = right
+    self.bottom = bottom
+    self.left = left
+  }
 }
 
 private struct ResolvedHTML {

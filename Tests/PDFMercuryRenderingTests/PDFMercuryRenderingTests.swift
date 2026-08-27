@@ -6,7 +6,7 @@ import Testing
 @Suite("Visual HTML and CSS rendering")
 @MainActor
 struct PDFMercuryRenderingTests {
-  @Test("renders a solid portrait page")
+  @Test("expected: renders one solid portrait page")
   func rendersSolidPortraitPage() async throws {
     let html = HTMLSource.string(try fixtureString("solid-portrait.html"))
     let stylesheets: [CSSSource] = [
@@ -18,10 +18,10 @@ struct PDFMercuryRenderingTests {
       stylesheets: stylesheets
     )
 
-    try verifyAndArchive(pdf, as: "01-solid-portrait.pdf")
+    try verifyAndArchive(pdf, as: "01-expected-portrait.pdf")
   }
 
-  @Test("renders a solid landscape page")
+  @Test("expected: renders one solid landscape page")
   func rendersSolidLandscapePage() async throws {
     let html = HTMLSource.file(try fixtureURL("solid-landscape.html"))
     let stylesheets: [CSSSource] = [
@@ -33,10 +33,10 @@ struct PDFMercuryRenderingTests {
       stylesheets: stylesheets
     )
 
-    try verifyAndArchive(pdf, as: "02-solid-landscape.pdf")
+    try verifyAndArchive(pdf, as: "02-expected-landscape.pdf")
   }
 
-  @Test("renders a multi-page Lorem Ipsum document")
+  @Test("expected: renders exactly three explicit pages")
   func rendersMultiPageLoremIpsumDocument() async throws {
     let html = HTMLSource.file(try fixtureURL("lorem-ipsum-multipage.html"))
     let stylesheets: [CSSSource] = [
@@ -50,15 +50,55 @@ struct PDFMercuryRenderingTests {
 
     try verifyAndArchive(
       pdf,
-      as: "03-lorem-ipsum-multipage.pdf",
+      as: "03-expected-3-explicit-pages.pdf",
       expectedPageCount: 3
+    )
+  }
+
+  @Test("expected: renders natural flow without page padding")
+  func rendersNaturallyFlowingTextAcrossPages() async throws {
+    let html = HTMLSource.file(try fixtureURL("flowing-lorem-ipsum.html"))
+    let stylesheets: [CSSSource] = [
+      .file(try fixtureURL("flowing-lorem-ipsum.css"))
+    ]
+
+    let pdf = try await RenderEngine().render(
+      html: html,
+      stylesheets: stylesheets
+    )
+
+    try verifyAndArchive(
+      pdf,
+      as: "04-expected-no-page-padding.pdf",
+      minimumPageCount: 2
+    )
+  }
+
+  @Test("expected: applies page padding on every page")
+  func rendersNaturallyFlowingTextWithPagePadding() async throws {
+    let html = HTMLSource.file(try fixtureURL("flowing-lorem-ipsum.html"))
+    let stylesheets: [CSSSource] = [
+      .file(try fixtureURL("flowing-lorem-ipsum.css")),
+      .file(try fixtureURL("flowing-lorem-ipsum-page-padding.css")),
+    ]
+
+    let pdf = try await RenderEngine().render(
+      html: html,
+      stylesheets: stylesheets
+    )
+
+    try verifyAndArchive(
+      pdf,
+      as: "05-expected-padding-on-every-page.pdf",
+      minimumPageCount: 2
     )
   }
 
   private func verifyAndArchive(
     _ pdf: Data,
     as filename: String,
-    expectedPageCount: Int? = nil
+    expectedPageCount: Int? = nil,
+    minimumPageCount: Int = 1
   ) throws {
     let outputDirectory = visualOutputDirectory()
     try FileManager.default.createDirectory(
@@ -70,7 +110,7 @@ struct PDFMercuryRenderingTests {
     try pdf.write(to: outputURL, options: .atomic)
 
     let document = try #require(CGPDFDocument(outputURL as CFURL))
-    #expect(document.numberOfPages > 0)
+    #expect(document.numberOfPages >= minimumPageCount)
     if let expectedPageCount {
       #expect(document.numberOfPages == expectedPageCount)
     }
