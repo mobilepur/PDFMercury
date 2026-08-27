@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PDFKit
 import PDFMercury
 import Testing
 
@@ -116,6 +117,30 @@ struct PDFMercuryRenderingTests {
     )
   }
 
+  @Test("expected: continues tables on following pages without splitting rows")
+  func rendersTableAcrossPagesWithoutSplittingRows() async throws {
+    let html = HTMLSource.file(try fixtureURL("flowing-table.html"))
+    let stylesheets: [CSSSource] = [
+      .file(try fixtureURL("flowing-table.css"))
+    ]
+
+    let pdf = try await RenderEngine().render(
+      html: html,
+      stylesheets: stylesheets
+    )
+
+    try verifyAndArchive(
+      pdf,
+      as: "07-expected-table-continues-with-intact-rows.pdf",
+      minimumPageCount: 2
+    )
+    try expectTextsOnSamePage(
+      in: pdf,
+      first: "ROW 04 START",
+      second: "ROW 04 END"
+    )
+  }
+
   private func verifyAndArchive(
     _ pdf: Data,
     as filename: String,
@@ -153,6 +178,20 @@ struct PDFMercuryRenderingTests {
 
   private func fixtureString(_ filename: String) throws -> String {
     try String(contentsOf: fixtureURL(filename), encoding: .utf8)
+  }
+
+  private func expectTextsOnSamePage(
+    in pdf: Data,
+    first: String,
+    second: String
+  ) throws {
+    let document = try #require(PDFDocument(data: pdf))
+    let pageTexts = (0..<document.pageCount).map {
+      document.page(at: $0)?.string ?? ""
+    }
+    let firstPage = try #require(pageTexts.firstIndex { $0.contains(first) })
+    let secondPage = try #require(pageTexts.firstIndex { $0.contains(second) })
+    #expect(firstPage == secondPage)
   }
 
   private func repositoryRoot() -> URL {

@@ -35,11 +35,11 @@ public final class RenderEngine {
       )
     )
 
-    let textLineRanges = try await textLineRanges(in: webView)
+    let pageBreakAvoidanceRanges = try await pageBreakAvoidanceRanges(in: webView)
     let pageSlices = pageSlices(
       contentHeight: contentHeight,
       pageSize: contentPageRect.size,
-      textLineRanges: textLineRanges
+      pageBreakAvoidanceRanges: pageBreakAvoidanceRanges
     )
     var pages: [Data] = []
     pages.reserveCapacity(pageSlices.count)
@@ -54,7 +54,7 @@ public final class RenderEngine {
 
   private static let pageBoundaryTolerance: CGFloat = 0.5
 
-  private func textLineRanges(in webView: WKWebView) async throws -> [VerticalRange] {
+  private func pageBreakAvoidanceRanges(in webView: WKWebView) async throws -> [VerticalRange] {
     let script = """
       (() => {
         const ranges = [];
@@ -79,6 +79,16 @@ public final class RenderEngine {
           }
         }
 
+        for (const row of document.querySelectorAll('table tr')) {
+          const rect = row.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            ranges.push([
+              rect.top + window.scrollY,
+              rect.bottom + window.scrollY
+            ]);
+          }
+        }
+
         return ranges;
       })()
       """
@@ -98,7 +108,7 @@ public final class RenderEngine {
   private func pageSlices(
     contentHeight: CGFloat,
     pageSize: CGSize,
-    textLineRanges: [VerticalRange]
+    pageBreakAvoidanceRanges: [VerticalRange]
   ) -> [CGRect] {
     var slices: [CGRect] = []
     var startY: CGFloat = 0
@@ -106,14 +116,14 @@ public final class RenderEngine {
     while contentHeight - startY > Self.pageBoundaryTolerance {
       let maximumEndY = min(startY + pageSize.height, contentHeight)
       var endY = maximumEndY
-      let crossingLineStart =
-        textLineRanges
+      let crossingContentStart =
+        pageBreakAvoidanceRanges
         .filter { $0.minY < maximumEndY && $0.maxY > maximumEndY }
         .map(\.minY)
         .min()
 
       if maximumEndY < contentHeight,
-        let safeEndY = crossingLineStart,
+        let safeEndY = crossingContentStart,
         safeEndY - startY > Self.pageBoundaryTolerance
       {
         endY = safeEndY
