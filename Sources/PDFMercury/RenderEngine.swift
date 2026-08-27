@@ -36,17 +36,34 @@ public final class RenderEngine {
     )
 
     let pageBreakAvoidanceRanges = try await pageBreakAvoidanceRanges(in: webView)
+    let tableContinuations = try await tableContinuations(in: webView)
     let pageSlices = pageSlices(
       contentHeight: contentHeight,
       pageSize: contentPageRect.size,
-      pageBreakAvoidanceRanges: pageBreakAvoidanceRanges
+      pageBreakAvoidanceRanges: pageBreakAvoidanceRanges,
+      tableContinuations: tableContinuations
     )
-    var pages: [Data] = []
+    var pages: [RenderedPage] = []
     pages.reserveCapacity(pageSlices.count)
     for pageSlice in pageSlices {
-      let configuration = WKPDFConfiguration()
-      configuration.rect = pageSlice
-      pages.append(try await webView.pdf(configuration: configuration))
+      let bodyConfiguration = WKPDFConfiguration()
+      bodyConfiguration.rect = pageSlice.bodyRect
+      let body = try await webView.pdf(configuration: bodyConfiguration)
+
+      var repeatedHeader: Data?
+      if let headerRect = pageSlice.repeatedHeaderRect {
+        let headerConfiguration = WKPDFConfiguration()
+        headerConfiguration.rect = headerRect
+        repeatedHeader = try await webView.pdf(configuration: headerConfiguration)
+      }
+
+      pages.append(
+        RenderedPage(
+          body: body,
+          repeatedHeader: repeatedHeader,
+          repeatedHeaderHeight: pageSlice.repeatedHeaderRect?.height ?? 0
+        )
+      )
     }
 
     return try combine(pages, pageLayout: pageLayout)
@@ -79,12 +96,25 @@ public final class RenderEngine {
           }
         }
 
-        for (const row of document.querySelectorAll('table tr')) {
-          const rect = row.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
+        for (const table of document.querySelectorAll('table')) {
+          const rows = Array.from(table.rows);
+          for (const row of rows) {
+            const rect = row.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) continue;
             ranges.push([
               rect.top + window.scrollY,
               rect.bottom + window.scrollY
+            ]);
+          }
+
+          const header = table.tHead?.getBoundingClientRect();
+          const firstBodyRow = Array.from(table.tBodies)
+            .flatMap(body => Array.from(body.rows))[0]
+            ?.getBoundingClientRect();
+          if (header && firstBodyRow && header.height > 0 && firstBodyRow.height > 0) {
+            ranges.push([
+              header.top + window.scrollY,
+              firstBodyRow.bottom + window.scrollY
             ]);
           }
         }
@@ -105,16 +135,74 @@ public final class RenderEngine {
     }
   }
 
+  private func tableContinuations(in webView: WKWebView) async throws
+    -> [TableContinuation]
+  {
+    let script = """
+      (() => {
+        const continuations = [];
+
+        for (const table of document.querySelectorAll('table')) {
+          const header = table.tHead?.getBoundingClientRect();
+          if (!header || header.width <= 0 || header.height <= 0) continue;
+
+          const bodyRows = Array.from(table.tBodies)
+            .flatMap(body => Array.from(body.rows));
+          for (const row of bodyRows.slice(1)) {
+            const rect = row.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) continue;
+            continuations.push([
+              rect.top + window.scrollY,
+              rect.bottom + window.scrollY,
+              header.top + window.scrollY,
+              header.bottom + window.scrollY
+            ]);
+          }
+        }
+
+        return continuations;
+      })()
+      """
+    let result = try await webView.evaluateJavaScript(script)
+    guard let values = result as? [[NSNumber]] else {
+      throw PDFMercuryError.invalidRenderedPDF
+    }
+    return values.compactMap { value in
+      guard value.count == 4 else { return nil }
+      return TableContinuation(
+        rowRange: VerticalRange(
+          minY: CGFloat(value[0].doubleValue),
+          maxY: CGFloat(value[1].doubleValue)
+        ),
+        headerRange: VerticalRange(
+          minY: CGFloat(value[2].doubleValue),
+          maxY: CGFloat(value[3].doubleValue)
+        )
+      )
+    }
+  }
+
   private func pageSlices(
     contentHeight: CGFloat,
     pageSize: CGSize,
-    pageBreakAvoidanceRanges: [VerticalRange]
-  ) -> [CGRect] {
-    var slices: [CGRect] = []
+    pageBreakAvoidanceRanges: [VerticalRange],
+    tableContinuations: [TableContinuation]
+  ) -> [PageSlice] {
+    var slices: [PageSlice] = []
     var startY: CGFloat = 0
 
     while contentHeight - startY > Self.pageBoundaryTolerance {
-      let maximumEndY = min(startY + pageSize.height, contentHeight)
+      let startingContinuation = tableContinuations.first {
+        abs($0.rowRange.minY - startY) <= Self.pageBoundaryTolerance
+      }
+      let repeatedHeaderRange = startingContinuation.flatMap { continuation in
+        let headerHeight = continuation.headerRange.height
+        let rowFitsBelowHeader =
+          continuation.rowRange.height + headerHeight <= pageSize.height
+        return rowFitsBelowHeader ? continuation.headerRange : nil
+      }
+      let bodyHeight = pageSize.height - (repeatedHeaderRange?.height ?? 0)
+      let maximumEndY = min(startY + bodyHeight, contentHeight)
       var endY = maximumEndY
       let crossingContentStart =
         pageBreakAvoidanceRanges
@@ -129,19 +217,40 @@ public final class RenderEngine {
         endY = safeEndY
       }
 
-      slices.append(
+      let repeatedHeaderRect = repeatedHeaderRange.map {
         CGRect(
           x: 0,
-          y: startY,
+          y: $0.minY,
           width: pageSize.width,
-          height: endY - startY
+          height: $0.height
+        )
+      }
+      slices.append(
+        PageSlice(
+          bodyRect: CGRect(
+            x: 0,
+            y: startY,
+            width: pageSize.width,
+            height: endY - startY
+          ),
+          repeatedHeaderRect: repeatedHeaderRect
         )
       )
       startY = endY
     }
 
     if slices.isEmpty {
-      slices.append(CGRect(origin: .zero, size: pageSize))
+      slices.append(
+        PageSlice(
+          bodyRect: CGRect(
+            x: 0,
+            y: 0,
+            width: pageSize.width,
+            height: pageSize.height
+          ),
+          repeatedHeaderRect: nil
+        )
+      )
     }
     return slices
   }
@@ -162,7 +271,7 @@ public final class RenderEngine {
     return CGFloat(number.doubleValue)
   }
 
-  private func combine(_ pages: [Data], pageLayout: PageLayout) throws -> Data {
+  private func combine(_ pages: [RenderedPage], pageLayout: PageLayout) throws -> Data {
     let output = NSMutableData()
     guard let consumer = CGDataConsumer(data: output as CFMutableData) else {
       throw PDFMercuryError.couldNotCreatePDF
@@ -172,36 +281,76 @@ public final class RenderEngine {
       throw PDFMercuryError.couldNotCreatePDF
     }
 
-    for data in pages {
-      guard
-        let provider = CGDataProvider(data: data as CFData),
-        let document = CGPDFDocument(provider),
-        let page = document.page(at: 1)
-      else {
-        throw PDFMercuryError.invalidRenderedPDF
-      }
-
+    for page in pages {
       context.beginPDFPage(nil)
-      context.saveGState()
-      let renderedPageRect = page.getBoxRect(.mediaBox)
-      context.clip(to: pageLayout.contentRect)
-      context.translateBy(
-        x: pageLayout.contentRect.minX - renderedPageRect.minX,
-        y: pageLayout.contentRect.maxY - renderedPageRect.maxY
+      if let repeatedHeader = page.repeatedHeader {
+        try draw(
+          repeatedHeader,
+          in: context,
+          pageLayout: pageLayout,
+          topInset: 0
+        )
+      }
+      try draw(
+        page.body,
+        in: context,
+        pageLayout: pageLayout,
+        topInset: page.repeatedHeaderHeight
       )
-      context.drawPDFPage(page)
-      context.restoreGState()
       context.endPDFPage()
     }
 
     context.closePDF()
     return output as Data
   }
+
+  private func draw(
+    _ data: Data,
+    in context: CGContext,
+    pageLayout: PageLayout,
+    topInset: CGFloat
+  ) throws {
+    guard
+      let provider = CGDataProvider(data: data as CFData),
+      let document = CGPDFDocument(provider),
+      let page = document.page(at: 1)
+    else {
+      throw PDFMercuryError.invalidRenderedPDF
+    }
+
+    context.saveGState()
+    let renderedPageRect = page.getBoxRect(.mediaBox)
+    context.clip(to: pageLayout.contentRect)
+    context.translateBy(
+      x: pageLayout.contentRect.minX - renderedPageRect.minX,
+      y: pageLayout.contentRect.maxY - topInset - renderedPageRect.maxY
+    )
+    context.drawPDFPage(page)
+    context.restoreGState()
+  }
 }
 
 private struct VerticalRange {
   let minY: CGFloat
   let maxY: CGFloat
+
+  var height: CGFloat { maxY - minY }
+}
+
+private struct TableContinuation {
+  let rowRange: VerticalRange
+  let headerRange: VerticalRange
+}
+
+private struct PageSlice {
+  let bodyRect: CGRect
+  let repeatedHeaderRect: CGRect?
+}
+
+private struct RenderedPage {
+  let body: Data
+  let repeatedHeader: Data?
+  let repeatedHeaderHeight: CGFloat
 }
 
 private struct RenderDocument {

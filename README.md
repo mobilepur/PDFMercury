@@ -1,9 +1,6 @@
 # PDFMercury
 
-PDFMercury will be a Swift package for turning HTML into paginated PDF documents.
-
-> [!NOTE]
-> PDFMercury is in early development. The package currently contains only the project foundation.
+PDFMercury is a Swift package that renders HTML and CSS into paginated, vector-based PDF documents with WebKit.
 
 ## Requirements
 
@@ -14,17 +11,47 @@ PDFMercury will be a Swift package for turning HTML into paginated PDF documents
 
 ## Installation
 
-Add PDFMercury through Xcode's package dependency interface or declare it in `Package.swift`:
+Add the package in Xcode or declare it in `Package.swift`:
 
 ```swift
 .package(
-    url: "https://github.com/mobilepur/PDFMercury.git",
-    branch: "main"
+  url: "https://github.com/mobilepur/PDFMercury.git",
+  from: "0.1.0"
 )
 ```
 
-Then add `PDFMercury` to the dependencies of your target.
+Then add the `PDFMercury` library product to your target.
 
-## License
+## Usage
 
-PDFMercury is available under the MIT License.
+```swift
+import Foundation
+import PDFMercury
+
+@MainActor
+func createInvoicePDF() async throws -> Data {
+  let documents = FileManager.default.urls(
+    for: .documentDirectory,
+    in: .userDomainMask
+  )[0]
+
+  return try await RenderEngine().render(
+    html: .string(
+      "<h1>Invoice</h1><img src=\"company-logo.svg\">",
+      baseURL: documents
+    ),
+    stylesheets: [
+      .file(documents.appendingPathComponent("invoice.css"))
+    ]
+  )
+}
+```
+
+## More
+
+- [Documentation](Doc/documentation.md)
+- [Release notes](Doc/release_notes.md)
+- [Development log](Doc/log.md)
+- [Visual testing](Tests/VISUAL_REPORTS.md)
+
+PDFMercury is available under the [MIT License](LICENSE).

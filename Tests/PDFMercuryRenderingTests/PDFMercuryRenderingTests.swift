@@ -117,8 +117,8 @@ struct PDFMercuryRenderingTests {
     )
   }
 
-  @Test("expected: continues tables on following pages without splitting rows")
-  func rendersTableAcrossPagesWithoutSplittingRows() async throws {
+  @Test("expected: repeats table headers and keeps rows intact across pages")
+  func rendersTableAcrossPagesWithRepeatedHeadersAndIntactRows() async throws {
     let html = HTMLSource.file(try fixtureURL("flowing-table.html"))
     let stylesheets: [CSSSource] = [
       .file(try fixtureURL("flowing-table.css"))
@@ -131,13 +131,18 @@ struct PDFMercuryRenderingTests {
 
     try verifyAndArchive(
       pdf,
-      as: "07-expected-table-continues-with-intact-rows.pdf",
+      as: "07-expected-repeated-table-headers-and-intact-rows.pdf",
       minimumPageCount: 2
     )
     try expectTextsOnSamePage(
       in: pdf,
       first: "ROW 04 START",
       second: "ROW 04 END"
+    )
+    try expectText(
+      "POSITION",
+      onEveryPageContaining: "ROW",
+      in: pdf
     )
   }
 
@@ -192,6 +197,24 @@ struct PDFMercuryRenderingTests {
     let firstPage = try #require(pageTexts.firstIndex { $0.contains(first) })
     let secondPage = try #require(pageTexts.firstIndex { $0.contains(second) })
     #expect(firstPage == secondPage)
+  }
+
+  private func expectText(
+    _ expectedText: String,
+    onEveryPageContaining pageMarker: String,
+    in pdf: Data
+  ) throws {
+    let document = try #require(PDFDocument(data: pdf))
+    let relevantPageTexts = (0..<document.pageCount)
+      .compactMap { document.page(at: $0)?.string }
+      .filter { $0.contains(pageMarker) }
+    let normalizedExpectedText = expectedText.filter { !$0.isWhitespace }
+
+    #expect(!relevantPageTexts.isEmpty)
+    for pageText in relevantPageTexts {
+      let normalizedPageText = pageText.filter { !$0.isWhitespace }
+      #expect(normalizedPageText.contains(normalizedExpectedText))
+    }
   }
 
   private func repositoryRoot() -> URL {
