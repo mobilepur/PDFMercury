@@ -94,6 +94,28 @@ struct PDFMercuryRenderingTests {
     )
   }
 
+  @Test("expected: resolves local HTML and CSS file assets")
+  func rendersLocalRuntimeAssets() async throws {
+    let html = HTMLSource.string(
+      try fixtureString("runtime-local-assets.html"),
+      baseURL: try fixturesDirectory()
+    )
+    let stylesheets: [CSSSource] = [
+      .file(try fixtureURL("runtime-assets/document.css"))
+    ]
+
+    let pdf = try await RenderEngine().render(
+      html: html,
+      stylesheets: stylesheets
+    )
+
+    try verifyAndArchive(
+      pdf,
+      as: "06-expected-local-runtime-assets.pdf",
+      expectedPageCount: 1
+    )
+  }
+
   private func verifyAndArchive(
     _ pdf: Data,
     as filename: String,

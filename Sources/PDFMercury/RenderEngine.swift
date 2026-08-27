@@ -220,14 +220,24 @@ private struct RenderDocument {
   private static func resolve(_ source: HTMLSource) throws -> ResolvedHTML {
     switch source {
     case .string(let contents, let baseURL):
-      return ResolvedHTML(contents: contents, baseURL: baseURL)
+      return ResolvedHTML(
+        contents: LocalAssetResolver.resolveHTMLAssets(
+          in: contents,
+          relativeTo: baseURL
+        ),
+        baseURL: baseURL
+      )
     case .file(let url):
       guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
         throw PDFMercuryError.unreadableHTMLFile(url)
       }
+      let baseURL = url.deletingLastPathComponent()
       return ResolvedHTML(
-        contents: contents,
-        baseURL: url.deletingLastPathComponent()
+        contents: LocalAssetResolver.resolveHTMLAssets(
+          in: contents,
+          relativeTo: baseURL
+        ),
+        baseURL: baseURL
       )
     }
   }
@@ -243,9 +253,13 @@ private struct RenderDocument {
       guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
         throw PDFMercuryError.unreadableCSSFile(url)
       }
+      let resolvedContents = LocalAssetResolver.resolveCSSAssets(
+        in: contents,
+        relativeTo: url.deletingLastPathComponent()
+      )
       return ResolvedStylesheet(
-        contents: contents,
-        htmlElement: "<style>\n\(contents)\n</style>"
+        contents: resolvedContents,
+        htmlElement: "<style>\n\(resolvedContents)\n</style>"
       )
     }
   }
@@ -417,6 +431,98 @@ private struct ResolvedHTML {
 private struct ResolvedStylesheet {
   let contents: String
   let htmlElement: String
+}
+
+private enum LocalAssetResolver {
+  private static let htmlSourcePattern = #"(?i)(\bsrc\s*=\s*[\"'])([^\"']+)([\"'])"#
+  private static let cssURLPattern = #"(?i)(url\(\s*[\"']?)([^\"')]+)([\"']?\s*\))"#
+
+  static func resolveHTMLAssets(in html: String, relativeTo baseURL: URL?) -> String {
+    replacingLocalURLs(
+      in: html,
+      matching: htmlSourcePattern,
+      relativeTo: baseURL
+    )
+  }
+
+  static func resolveCSSAssets(in css: String, relativeTo baseURL: URL) -> String {
+    replacingLocalURLs(
+      in: css,
+      matching: cssURLPattern,
+      relativeTo: baseURL
+    )
+  }
+
+  private static func replacingLocalURLs(
+    in contents: String,
+    matching pattern: String,
+    relativeTo baseURL: URL?
+  ) -> String {
+    guard let baseURL, baseURL.isFileURL else { return contents }
+    guard let expression = try? NSRegularExpression(pattern: pattern) else {
+      return contents
+    }
+
+    let original = contents as NSString
+    let matches = expression.matches(
+      in: contents,
+      range: NSRange(location: 0, length: original.length)
+    )
+    var result = contents
+
+    for match in matches.reversed() {
+      let valueRange = match.range(at: 2)
+      let value = original.substring(with: valueRange)
+      guard let dataURL = dataURL(for: value, relativeTo: baseURL) else {
+        continue
+      }
+      guard let range = Range(valueRange, in: result) else { continue }
+      result.replaceSubrange(range, with: dataURL)
+    }
+
+    return result
+  }
+
+  private static func dataURL(for value: String, relativeTo baseURL: URL) -> String? {
+    let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedValue.isEmpty, !trimmedValue.hasPrefix("#") else { return nil }
+
+    let assetURL: URL
+    if let absoluteURL = URL(string: trimmedValue), absoluteURL.scheme != nil {
+      guard absoluteURL.isFileURL else { return nil }
+      assetURL = absoluteURL
+    } else {
+      assetURL = URL(fileURLWithPath: trimmedValue, relativeTo: baseURL).standardizedFileURL
+    }
+
+    guard let data = try? Data(contentsOf: assetURL) else { return nil }
+    return "data:\(mimeType(for: assetURL));base64,\(data.base64EncodedString())"
+  }
+
+  private static func mimeType(for url: URL) -> String {
+    switch url.pathExtension.lowercased() {
+    case "svg":
+      return "image/svg+xml"
+    case "png":
+      return "image/png"
+    case "jpg", "jpeg":
+      return "image/jpeg"
+    case "gif":
+      return "image/gif"
+    case "webp":
+      return "image/webp"
+    case "woff":
+      return "font/woff"
+    case "woff2":
+      return "font/woff2"
+    case "ttf":
+      return "font/ttf"
+    case "otf":
+      return "font/otf"
+    default:
+      return "application/octet-stream"
+    }
+  }
 }
 
 @MainActor
