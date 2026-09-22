@@ -7,12 +7,13 @@ final class PageFooterRenderer {
   private let webView: WKWebView
   private let width: CGFloat
 
-  init(source: WKWebView, configuration: PageFooter, baseURL: URL?, size: CGSize) async throws {
+  init(source: WKWebView, webView: WKWebView, configuration: PageFooter, baseURL: URL?, size: CGSize) async throws {
     guard !configuration.elementID.isEmpty, configuration.gap.isFinite, configuration.gap >= 0 else {
       throw PDFMercuryError.invalidPageFooter("The element ID must be nonempty and the gap finite and nonnegative.")
     }
     self.width = size.width
-    webView = WKWebView(frame: CGRect(origin: .zero, size: size))
+    self.webView = webView
+    webView.frame = CGRect(origin: .zero, size: size)
     let result = try await source.callAsyncJavaScript("""
       const matches = Array.from(document.querySelectorAll('[id]')).filter(e => e.id === elementID);
       if (matches.length !== 1) return {error: 'Expected exactly one element with the requested ID.'};
@@ -57,6 +58,7 @@ final class PageFooterRenderer {
   }
 
   func height(pageNumber: Int, pageCount: Int) async throws -> CGFloat {
+    try Task.checkCancellation()
     let result = try await webView.callAsyncJavaScript("""
       for (const element of document.querySelectorAll('[data-pdf-page-number]')) element.textContent = String(pageNumber);
       for (const element of document.querySelectorAll('[data-pdf-page-count]')) element.textContent = String(pageCount);

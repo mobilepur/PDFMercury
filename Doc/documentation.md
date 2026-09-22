@@ -40,9 +40,37 @@ An `@page` rule inside an HTML `<style>` element is rendered by WebKit but is no
 
 ## Pagination
 
-Content flows onto additional PDF pages automatically. PDFMercury avoids splitting text lines and ordinary table rows where they fit on a page. For a normal-flow table with a `<thead>`, the header is repeated when the table continues on another page.
+Content flows onto additional PDF pages automatically. PDFMercury avoids splitting text lines and ordinary table rows where they fit on a page. Normal-flow blocks with computed `break-inside: avoid`, `break-inside: avoid-page`, or legacy `page-break-inside: avoid` are also kept together when they fit in the available page area. This is useful for invoice totals and final payment details; use flowing content rather than fixed heights or absolute positioning for these blocks.
 
-An individual row taller than the available page height must be split. Parallel tables with independent vertical row grids, `rowspan` pagination, tables wider than the page, named `@page` rules, running headers and footers, and CSS page counters are not part of version 0.1.0.
+For a normal-flow table with a `<thead>`, the header is repeated when the table continues on another page, including continuations within an oversized row. Its height is reserved from that page's content area. A header as tall as the page content area is not repeated.
+
+A block or row taller than the available page height must be split. Its text lines and smaller keep-together blocks are still protected where they fit, so an oversized container does not force a cut through an otherwise avoidable text line. If even an individual line is taller than the available area, splitting is unavoidable. Parallel tables with independent vertical row grids, `rowspan` pagination, tables wider than the page, named `@page` rules, running headers, and CSS page counters are not supported.
+
+### Optional running footer (local development)
+
+Pass a `PageFooter` to repeat an explicitly identified HTML element on every page:
+
+```swift
+let pdf = try await RenderEngine().render(
+  html: .string("""
+    <html><body>
+      <main>Document content</main>
+      <footer id="page-footer">
+        Company · Bank details
+        Page <span data-pdf-page-number></span> of <span data-pdf-page-count></span>
+      </footer>
+    </body></html>
+    """),
+  stylesheets: [.string("@page { size: A4; margin: 48pt; }")],
+  pageFooter: PageFooter(elementID: "page-footer", gap: 12)
+)
+```
+
+The element must have a unique, nonempty ID and be a visible, normal-flow direct child of `<body>`. The renderer removes it from the body flow and renders it at the bottom of the content area, **inside** the configured page margins. Its measured height and the gap (PDF points, default 12) are reserved before splitting body content or repeating table headers. Short final pages use the same bottom alignment. Counter text is measured with the actual page count; varying heights reserve the largest measured footer to prevent overlap.
+
+Footer rendering preserves the document's stylesheets, HTML/body attributes, horizontal body insets and inherited typography. It uses a separate document containing only the footer, so use selectors that do not depend on body siblings, viewport height, or JavaScript. Vertical body layout dimensions, padding, margins and borders are reset there, and the footer's outer margin is zeroed; use `gap` for separation and footer padding for internal spacing. Keep the footer in normal flow without fixed/absolute positioning, fixed heights that clip content, or overflow. Counter placeholders are replaced with decimal text. The consumer owns wording such as “Page” or “Seite”.
+
+Missing, duplicate, hidden, overflowing or oversized footers, invalid gaps, and layouts whose height does not stabilize throw `PDFMercuryError.invalidPageFooter`. Omitting `pageFooter` preserves the existing behavior: an ordinary HTML footer remains in document flow and appears once. This additive API is currently local development work and has not been released.
 
 ## Assets and output
 
