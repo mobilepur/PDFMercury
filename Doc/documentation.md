@@ -46,7 +46,7 @@ For a normal-flow table with a `<thead>`, the header is repeated when the table 
 
 A block or row taller than the available page height must be split. Its text lines and smaller keep-together blocks are still protected where they fit, so an oversized container does not force a cut through an otherwise avoidable text line. If even an individual line is taller than the available area, splitting is unavoidable. Parallel tables with independent vertical row grids, `rowspan` pagination, tables wider than the page, named `@page` rules, running headers, and CSS page counters are not supported.
 
-### Optional running footer (local development)
+### Optional running footer (0.2.0)
 
 Pass a `PageFooter` to repeat an explicitly identified HTML element on every page:
 
@@ -70,7 +70,13 @@ The element must have a unique, nonempty ID and be a visible, normal-flow direct
 
 Footer rendering preserves the document's stylesheets, HTML/body attributes, horizontal body insets and inherited typography. It uses a separate document containing only the footer, so use selectors that do not depend on body siblings, viewport height, or JavaScript. Vertical body layout dimensions, padding, margins and borders are reset there, and the footer's outer margin is zeroed; use `gap` for separation and footer padding for internal spacing. Keep the footer in normal flow without fixed/absolute positioning, fixed heights that clip content, or overflow. Counter placeholders are replaced with decimal text. The consumer owns wording such as “Page” or “Seite”.
 
-Missing, duplicate, hidden, overflowing or oversized footers, invalid gaps, and layouts whose height does not stabilize throw `PDFMercuryError.invalidPageFooter`. Omitting `pageFooter` preserves the existing behavior: an ordinary HTML footer remains in document flow and appears once. This additive API is currently local development work and has not been released.
+Missing, duplicate, hidden, overflowing or oversized footers, invalid gaps, and layouts whose height does not stabilize throw `PDFMercuryError.invalidPageFooter`. Omitting `pageFooter` preserves the existing behavior: an ordinary HTML footer remains in document flow and appears once.
+
+## Rendering and cancellation
+
+`RenderEngine` remains `@MainActor` because it drives WebKit. File loading, local asset embedding, pagination calculations and Core Graphics PDF composition execute on a serial background queue. WebKit operations are asynchronous but must still be initiated on the main actor; first-time WebKit initialization can still cause a visible pause.
+
+Engines share one reusable body/footer WebKit session. Each render holds an exclusive lease across suspension points, so concurrent documents cannot mix their contents. Failed or cancelled sessions are discarded. Cancellation removes queued WebKit requests, skips background operations cancelled before execution, and stops pending navigation. Already-running synchronous work finishes before its result is discarded; cancellation is also checked between rendering phases.
 
 ## Assets and output
 
