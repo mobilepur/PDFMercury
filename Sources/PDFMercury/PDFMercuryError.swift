@@ -6,6 +6,7 @@ public enum PDFMercuryError: Error, Equatable, LocalizedError, Sendable {
   case webContentFailedToLoad(String)
   case invalidRenderedPDF
   case couldNotCreatePDF
+  case invalidPageFooter(String)
 
   public var errorDescription: String? {
     switch self {
@@ -19,6 +20,8 @@ public enum PDFMercuryError: Error, Equatable, LocalizedError, Sendable {
       "WebKit returned an invalid PDF page."
     case .couldNotCreatePDF:
       "Could not create the multi-page PDF."
+    case .invalidPageFooter(let message):
+      "Invalid page footer: \(message)"
     }
   }
 }
