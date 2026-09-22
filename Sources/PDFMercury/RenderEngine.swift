@@ -8,7 +8,8 @@ public final class RenderEngine {
 
   public func render(
     html source: HTMLSource,
-    stylesheets: [CSSSource] = []
+    stylesheets: [CSSSource] = [],
+    pageFooter: PageFooter? = nil
   ) async throws -> Data {
     let document = try RenderDocument(html: source, stylesheets: stylesheets)
     let pageLayout = document.pageLayout
@@ -22,6 +23,30 @@ public final class RenderEngine {
       in: webView
     )
 
+    let footerRenderer: PageFooterRenderer?
+    if let pageFooter {
+      footerRenderer = try await PageFooterRenderer(source: webView, configuration: pageFooter,
+        baseURL: document.baseURL, size: contentPageRect.size)
+      // A full-page viewport inflates scrollHeight even for an empty document.
+      // Measure the remaining flow without counting that artificial blank area.
+      webView.frame.size.height = 1
+    } else {
+      footerRenderer = nil
+    }
+
+    let overflowStyle: [String]?
+    if footerRenderer != nil {
+      overflowStyle = try await webView.evaluateJavaScript("""
+        (() => {
+          const style = document.documentElement.style;
+          const original = [style.getPropertyValue('overflow'), style.getPropertyPriority('overflow')];
+          style.setProperty('overflow', 'hidden', 'important');
+          return original;
+        })()
+        """) as? [String]
+    } else {
+      overflowStyle = nil
+    }
     let contentHeight = try await contentHeight(in: webView)
     let pageCount = max(
       1,
@@ -34,18 +59,48 @@ public final class RenderEngine {
         height: CGFloat(pageCount) * contentPageRect.height
       )
     )
+    if let overflowStyle, overflowStyle.count == 2 {
+      _ = try await webView.callAsyncJavaScript(
+        "document.documentElement.style.setProperty('overflow', value, priority);",
+        arguments: ["value": overflowStyle[0], "priority": overflowStyle[1]],
+        in: nil, contentWorld: .page)
+    }
 
     let pageBreakAvoidanceRanges = try await pageBreakAvoidanceRanges(in: webView)
     let tableContinuations = try await tableContinuations(in: webView)
-    let pageSlices = pageSlices(
-      contentHeight: contentHeight,
-      pageSize: contentPageRect.size,
-      pageBreakAvoidanceRanges: pageBreakAvoidanceRanges,
-      tableContinuations: tableContinuations
-    )
+    var footerHeight: CGFloat = 0
+    var pageSlices: [PageSlice] = []
+    var expectedPageCount = 1
+    var converged = false
+    // Counter text can wrap differently as the number of pages changes. Reserve
+    // the largest observed height; shrinking it again could oscillate pagination.
+    for _ in 0..<12 {
+      if let footerRenderer {
+        for pageNumber in 1...expectedPageCount {
+          footerHeight = max(footerHeight,
+            try await footerRenderer.height(pageNumber: pageNumber, pageCount: expectedPageCount))
+        }
+      }
+      let reservedHeight = footerHeight + (pageFooter.map { CGFloat($0.gap) } ?? 0)
+      let bodyHeight = contentPageRect.height - reservedHeight
+      guard bodyHeight > Self.pageBoundaryTolerance else {
+        throw PDFMercuryError.invalidPageFooter("The footer and gap leave no room for page content.")
+      }
+      pageSlices = self.pageSlices(contentHeight: contentHeight,
+        pageSize: CGSize(width: contentPageRect.width, height: bodyHeight),
+        pageBreakAvoidanceRanges: pageBreakAvoidanceRanges, tableContinuations: tableContinuations)
+      if footerRenderer == nil || pageSlices.count == expectedPageCount {
+        converged = true
+        break
+      }
+      expectedPageCount = pageSlices.count
+    }
+    guard converged else {
+      throw PDFMercuryError.invalidPageFooter("The footer height did not stabilize during pagination.")
+    }
     var pages: [RenderedPage] = []
     pages.reserveCapacity(pageSlices.count)
-    for pageSlice in pageSlices {
+    for (index, pageSlice) in pageSlices.enumerated() {
       let bodyConfiguration = WKPDFConfiguration()
       bodyConfiguration.rect = pageSlice.bodyRect
       let body = try await webView.pdf(configuration: bodyConfiguration)
@@ -57,11 +112,15 @@ public final class RenderEngine {
         repeatedHeader = try await webView.pdf(configuration: headerConfiguration)
       }
 
+      let footer = try await footerRenderer?.render(pageNumber: index + 1,
+        pageCount: pageSlices.count, maximumHeight: footerHeight)
       pages.append(
         RenderedPage(
           body: body,
           repeatedHeader: repeatedHeader,
-          repeatedHeaderHeight: pageSlice.repeatedHeaderRect?.height ?? 0
+          repeatedHeaderHeight: pageSlice.repeatedHeaderRect?.height ?? 0,
+          footer: footer?.0,
+          footerHeight: footer?.1 ?? 0
         )
       )
     }
@@ -93,6 +152,21 @@ public final class RenderEngine {
                 rect.bottom + window.scrollY
               ]);
             }
+          }
+        }
+
+        for (const element of document.body.querySelectorAll('*')) {
+          const style = getComputedStyle(element);
+          if (style.breakInside !== 'avoid' && style.breakInside !== 'avoid-page'
+              && style.pageBreakInside !== 'avoid') continue;
+          if (style.position === 'absolute' || style.position === 'fixed'
+              || style.display === 'inline') continue;
+          const rect = element.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            ranges.push([
+              rect.top + window.scrollY,
+              rect.bottom + window.scrollY
+            ]);
           }
         }
 
@@ -148,7 +222,7 @@ public final class RenderEngine {
 
           const bodyRows = Array.from(table.tBodies)
             .flatMap(body => Array.from(body.rows));
-          for (const row of bodyRows.slice(1)) {
+          for (const row of bodyRows) {
             const rect = row.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) continue;
             continuations.push([
@@ -193,28 +267,34 @@ public final class RenderEngine {
 
     while contentHeight - startY > Self.pageBoundaryTolerance {
       let startingContinuation = tableContinuations.first {
-        abs($0.rowRange.minY - startY) <= Self.pageBoundaryTolerance
+        $0.rowRange.minY <= startY + Self.pageBoundaryTolerance
+          && $0.rowRange.maxY > startY + Self.pageBoundaryTolerance
       }
       let repeatedHeaderRange = startingContinuation.flatMap { continuation in
         let headerHeight = continuation.headerRange.height
-        let rowFitsBelowHeader =
-          continuation.rowRange.height + headerHeight <= pageSize.height
-        return rowFitsBelowHeader ? continuation.headerRange : nil
+        // Even an overheight first row can continue across several pages.
+        // Omit an oversized header so the body can always make progress.
+        return pageSize.height - headerHeight > Self.pageBoundaryTolerance
+          ? continuation.headerRange : nil
       }
       let bodyHeight = pageSize.height - (repeatedHeaderRange?.height ?? 0)
       let maximumEndY = min(startY + bodyHeight, contentHeight)
       var endY = maximumEndY
-      let crossingContentStart =
-        pageBreakAvoidanceRanges
-        .filter { $0.minY < maximumEndY && $0.maxY > maximumEndY }
-        .map(\.minY)
-        .min()
-
-      if maximumEndY < contentHeight,
-        let safeEndY = crossingContentStart,
-        safeEndY - startY > Self.pageBoundaryTolerance
-      {
-        endY = safeEndY
+      if maximumEndY < contentHeight {
+        // Oversized containers must not hide the text lines inside them. Only
+        // move a break for content that fits and starts after this page's start;
+        // otherwise split it while retaining any smaller avoidable ranges.
+        let avoidableRanges = pageBreakAvoidanceRanges.filter {
+          $0.height <= bodyHeight
+            && $0.minY - startY > Self.pageBoundaryTolerance
+        }
+        while let safeEndY = avoidableRanges
+          .filter({ $0.minY < endY && $0.maxY > endY })
+          .map(\.minY)
+          .min()
+        {
+          endY = safeEndY
+        }
       }
 
       let repeatedHeaderRect = repeatedHeaderRange.map {
@@ -297,6 +377,10 @@ public final class RenderEngine {
         pageLayout: pageLayout,
         topInset: page.repeatedHeaderHeight
       )
+      if let footer = page.footer {
+        try draw(footer, in: context, pageLayout: pageLayout,
+          topInset: pageLayout.contentRect.height - page.footerHeight)
+      }
       context.endPDFPage()
     }
 
@@ -351,6 +435,8 @@ private struct RenderedPage {
   let body: Data
   let repeatedHeader: Data?
   let repeatedHeaderHeight: CGFloat
+  let footer: Data?
+  let footerHeight: CGFloat
 }
 
 private struct RenderDocument {
@@ -685,7 +771,7 @@ private enum LocalAssetResolver {
 }
 
 @MainActor
-private final class WebViewNavigationObserver: NSObject, WKNavigationDelegate {
+final class WebViewNavigationObserver: NSObject, WKNavigationDelegate {
   private var continuation: CheckedContinuation<Void, Error>?
 
   func load(_ html: String, baseURL: URL?, in webView: WKWebView) async throws {
