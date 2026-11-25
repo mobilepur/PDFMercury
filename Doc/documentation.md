@@ -38,6 +38,8 @@ Supported margin units are `px`, `pt`, `in`, `cm`, and `mm`. The `margin` shorth
 
 An `@page` rule inside an HTML `<style>` element is rendered by WebKit but is not used by PDFMercury to calculate the PDF page rectangle in version 0.1.0.
 
+Text keeps the sizes of the stylesheets on every platform (0.2.1): PDFMercury turns off the automatic text enlargement of mobile WebKit, so a document paginates on iOS as it does on the Mac.
+
 ## Pagination
 
 Content flows onto additional PDF pages automatically. PDFMercury avoids splitting text lines and ordinary table rows where they fit on a page. Normal-flow blocks with computed `break-inside: avoid`, `break-inside: avoid-page`, or legacy `page-break-inside: avoid` are also kept together when they fit in the available page area. This is useful for invoice totals and final payment details; use flowing content rather than fixed heights or absolute positioning for these blocks.

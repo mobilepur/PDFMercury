@@ -12,8 +12,10 @@ struct RenderDocument: Sendable {
     let resolvedPageLayout = Self.pageLayout(
       for: resolvedStylesheets.map(\.contents).joined(separator: "\n")
     )
+    // Mobile WebKit enlarges text on its own; a page keeps the sizes of its stylesheet.
     let viewport = """
       <meta name="viewport" content="width=\(resolvedPageLayout.contentRect.width), initial-scale=1.0">
+      <style>html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }</style>
       """
 
     html = Self.inject(
