@@ -12,7 +12,7 @@ struct PaginationTests {
   func keepsSummaryTogether(rule: String) async throws {
     let html = """
       <html><body>
-        <div style="height: 680px">INVOICE CONTENT</div>
+        <div style="height: 900px">INVOICE CONTENT</div>
         <section style="\(rule)">
           <div style="height: 70px">SUBTOTAL MARKER</div>
           <div style="height: 70px">TOTAL MARKER</div>
@@ -32,7 +32,7 @@ struct PaginationTests {
 
   @Test("Splits overheight content without losing or duplicating text", arguments: [false, true])
   func splitsOverheightContent(isTable: Bool) async throws {
-    let markers = (1...100).map { String(format: "LINE%03dEND", $0) }
+    let markers = (1...140).map { String(format: "LINE%03dEND", $0) }
     let lines = markers.map { "<div>\($0)</div>" }.joined()
     let content = isTable
       ? "<table><thead><tr><th>POSITION</th></tr></thead><tbody><tr><td>\(lines)</td></tr></tbody></table>"

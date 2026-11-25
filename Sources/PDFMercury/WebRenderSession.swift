@@ -83,7 +83,9 @@ final class WebRenderSession {
             try await footerRenderer.height(pageNumber: pageNumber, pageCount: expectedPageCount))
         }
       }
-      let reservedHeight = footerHeight + (pageFooter.map { CGFloat($0.gap) } ?? 0)
+      // The gap is given in PDF points; layout happens in CSS pixels.
+      let gap = pageFooter.map { CGFloat($0.gap) / PageLayout.pointsPerCSSPixel } ?? 0
+      let reservedHeight = footerHeight + gap
       let bodyHeight = contentPageRect.height - reservedHeight
       guard bodyHeight > Self.pageBoundaryTolerance else {
         throw PDFMercuryError.invalidPageFooter("The footer and gap leave no room for page content.")
