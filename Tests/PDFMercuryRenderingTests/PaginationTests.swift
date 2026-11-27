@@ -69,6 +69,23 @@ struct PaginationTests {
     }
   }
 
+  /// A4 with 20 mm margins leaves 971.34 CSS pixels per page, but scrollHeight
+  /// reports whole pixels. The 0.66 px remainder must not become a second page:
+  /// mobile WebKit never finishes a PDF snapshot of such a sliver.
+  @Test("A fractional page height does not add a page for rounding", .timeLimit(.minutes(1)),
+    arguments: [false, true])
+  func fractionalPageHeightKeepsOnePage(hasPageFooter: Bool) async throws {
+    let footer = hasPageFooter ? #"<footer id="footer">FOOTER</footer>"# : ""
+    let pdf = try await RenderEngine().render(
+      html: .string("<html><body><p>ONLY PAGE</p>\(footer)</body></html>"),
+      stylesheets: [.string("@page { size: A4; margin: 20mm; } body { margin: 0; font: 16px Helvetica; }")],
+      pageFooter: hasPageFooter ? .init(elementID: "footer") : nil
+    )
+    let document = try #require(PDFDocument(data: pdf))
+    #expect(document.pageCount == 1)
+    #expect(document.page(at: 0)?.string?.contains("ONLY PAGE") == true)
+  }
+
   private static let stylesheet = """
     @page { size: A4; margin: 48pt; }
     html, body { margin: 0; padding: 0; font-family: Helvetica; font-size: 12px; }

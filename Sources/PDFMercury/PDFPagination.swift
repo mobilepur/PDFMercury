@@ -1,7 +1,9 @@
 import CoreGraphics
 
 enum PDFPagination {
-  private static let pageBoundaryTolerance: CGFloat = 0.5
+  // Measured content heights are rounded up to whole CSS pixels. A remainder
+  // below one pixel is rounding, not content, and must not start a page.
+  private static let pageBoundaryTolerance: CGFloat = 1
 
   static func pageSlices(
     contentHeight: CGFloat,
