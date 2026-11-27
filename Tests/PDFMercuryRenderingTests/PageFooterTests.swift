@@ -48,7 +48,7 @@ struct PageFooterTests {
 
   @Test("Nil preserves one normal-flow footer")
   func noFooterOption() async throws {
-    let rows = (1...80).map { "<div style='height:24px'>ROW \($0)</div>" }.joined()
+    let rows = (1...120).map { "<div style='height:24px'>ROW \($0)</div>" }.joined()
     let data = try await RenderEngine().render(html: .string("<html><body>\(rows)<footer>END FOOTER</footer></body></html>"),
       stylesheets: [.string(Self.css)])
     let document = try #require(PDFDocument(data: data))
@@ -110,7 +110,8 @@ struct PageFooterTests {
     let body = try #require(document.findString("BODY ALIGNMENT", withOptions: []).first)
     let footer = try #require(document.findString("FOOTER ALIGNMENT", withOptions: []).first)
     #expect(abs(body.bounds(for: page).minX - footer.bounds(for: page).minX) < 0.5)
-    #expect(abs(footer.bounds(for: page).minX - 88) < 0.5)
+    // 48 + 22 + 18 CSS pixels are 66 pt.
+    #expect(abs(footer.bounds(for: page).minX - 66) < 0.5)
   }
 
   @Test("Fractional page widths fit the footer on mobile WebKit")

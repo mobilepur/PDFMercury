@@ -12,7 +12,7 @@ struct PaginationTests {
   func keepsSummaryTogether(rule: String) async throws {
     let html = """
       <html><body>
-        <div style="height: 680px">INVOICE CONTENT</div>
+        <div style="height: 900px">INVOICE CONTENT</div>
         <section style="\(rule)">
           <div style="height: 70px">SUBTOTAL MARKER</div>
           <div style="height: 70px">TOTAL MARKER</div>
@@ -32,7 +32,7 @@ struct PaginationTests {
 
   @Test("Splits overheight content without losing or duplicating text", arguments: [false, true])
   func splitsOverheightContent(isTable: Bool) async throws {
-    let markers = (1...100).map { String(format: "LINE%03dEND", $0) }
+    let markers = (1...140).map { String(format: "LINE%03dEND", $0) }
     let lines = markers.map { "<div>\($0)</div>" }.joined()
     let content = isTable
       ? "<table><thead><tr><th>POSITION</th></tr></thead><tbody><tr><td>\(lines)</td></tr></tbody></table>"
@@ -67,6 +67,23 @@ struct PaginationTests {
         #expect(pageText.components(separatedBy: "POSITION").count - 1 == 1)
       }
     }
+  }
+
+  /// A4 with 20 mm margins leaves 971.34 CSS pixels per page, but scrollHeight
+  /// reports whole pixels. The 0.66 px remainder must not become a second page:
+  /// mobile WebKit never finishes a PDF snapshot of such a sliver.
+  @Test("A fractional page height does not add a page for rounding", .timeLimit(.minutes(1)),
+    arguments: [false, true])
+  func fractionalPageHeightKeepsOnePage(hasPageFooter: Bool) async throws {
+    let footer = hasPageFooter ? #"<footer id="footer">FOOTER</footer>"# : ""
+    let pdf = try await RenderEngine().render(
+      html: .string("<html><body><p>ONLY PAGE</p>\(footer)</body></html>"),
+      stylesheets: [.string("@page { size: A4; margin: 20mm; } body { margin: 0; font: 16px Helvetica; }")],
+      pageFooter: hasPageFooter ? .init(elementID: "footer") : nil
+    )
+    let document = try #require(PDFDocument(data: pdf))
+    #expect(document.pageCount == 1)
+    #expect(document.page(at: 0)?.string?.contains("ONLY PAGE") == true)
   }
 
   private static let stylesheet = """

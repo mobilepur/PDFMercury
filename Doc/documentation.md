@@ -36,6 +36,8 @@ PDFMercury currently creates A4 pages. Use a CSS `@page` rule in a `CSSSource` p
 
 Supported margin units are `px`, `pt`, `in`, `cm`, and `mm`. The `margin` shorthand and the four individual `margin-*` properties are supported.
 
+Lengths keep their CSS meaning, as when a browser prints a page: one CSS pixel is 0.75 pt (96 pixels per inch), so `font-size: 16px` and `font-size: 12pt` produce the same 12 pt text in the PDF.
+
 An `@page` rule inside an HTML `<style>` element is rendered by WebKit but is not used by PDFMercury to calculate the PDF page rectangle in version 0.1.0.
 
 Text keeps the sizes of the stylesheets on every platform (0.2.1): PDFMercury turns off the automatic text enlargement of mobile WebKit, so a document paginates on iOS as it does on the Mac.

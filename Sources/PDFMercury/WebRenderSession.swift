@@ -83,7 +83,9 @@ final class WebRenderSession {
             try await footerRenderer.height(pageNumber: pageNumber, pageCount: expectedPageCount))
         }
       }
-      let reservedHeight = footerHeight + (pageFooter.map { CGFloat($0.gap) } ?? 0)
+      // The gap is given in PDF points; layout happens in CSS pixels.
+      let gap = pageFooter.map { CGFloat($0.gap) / PageLayout.pointsPerCSSPixel } ?? 0
+      let reservedHeight = footerHeight + gap
       let bodyHeight = contentPageRect.height - reservedHeight
       guard bodyHeight > Self.pageBoundaryTolerance else {
         throw PDFMercuryError.invalidPageFooter("The footer and gap leave no room for page content.")
@@ -106,16 +108,12 @@ final class WebRenderSession {
     pages.reserveCapacity(pageSlices.count)
     for (index, pageSlice) in pageSlices.enumerated() {
       try Task.checkCancellation()
-      let bodyConfiguration = WKPDFConfiguration()
-      bodyConfiguration.rect = pageSlice.bodyRect
-      let body = try await webView.pdf(configuration: bodyConfiguration)
+      let body = try await webView.pdfSnapshot(of: pageSlice.bodyRect)
       try Task.checkCancellation()
 
       var repeatedHeader: Data?
       if let headerRect = pageSlice.repeatedHeaderRect {
-        let headerConfiguration = WKPDFConfiguration()
-        headerConfiguration.rect = headerRect
-        repeatedHeader = try await webView.pdf(configuration: headerConfiguration)
+        repeatedHeader = try await webView.pdfSnapshot(of: headerRect)
       }
 
       let footer = try await footerRenderer?.render(pageNumber: index + 1,
@@ -137,7 +135,11 @@ final class WebRenderSession {
     }
   }
 
-  private static let pageBoundaryTolerance: CGFloat = 0.5
+  // scrollHeight is a whole number of CSS pixels, so a page whose height is
+  // fractional (for example A4 with millimeter margins) measures up to one
+  // pixel taller than its content. Such a remainder is rounding, not content,
+  // and must not start a page.
+  private static let pageBoundaryTolerance: CGFloat = 1
 
   private func pageBreakAvoidanceRanges(in webView: WKWebView) async throws -> [VerticalRange] {
     let script = """
@@ -281,4 +283,15 @@ final class WebRenderSession {
     return CGFloat(number.doubleValue)
   }
 
+}
+
+extension WKWebView {
+  /// Mobile WebKit never completes a PDF snapshot of a rect less than one CSS
+  /// pixel high, which would hang the render. Such a sliver holds no visible
+  /// content, so snapshot at least one pixel.
+  func pdfSnapshot(of rect: CGRect) async throws -> Data {
+    let configuration = WKPDFConfiguration()
+    configuration.rect = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: max(rect.height, 1))
+    return try await pdf(configuration: configuration)
+  }
 }

@@ -85,7 +85,11 @@ struct RenderDocument: Sendable {
   }
 
   private static func pageLayout(for css: String) -> PageLayout {
-    let a4Portrait = CGSize(width: 595.28, height: 841.89)
+    // Layout happens in CSS pixels; A4 is 595.28 × 841.89 PDF points.
+    let a4Portrait = CGSize(
+      width: 595.28 / PageLayout.pointsPerCSSPixel,
+      height: 841.89 / PageLayout.pointsPerCSSPixel
+    )
     var orientation = PageOrientation.portrait
     var margins = PageMargins.zero
 
@@ -178,9 +182,22 @@ enum PageOrientation: Sendable {
   case landscape
 }
 
+/// Page geometry in CSS pixels, the coordinate space of WebKit layout and of its PDF snapshots.
 struct PageLayout: Sendable {
+  /// CSS defines 96 pixels per inch and PDF 72 points per inch.
+  static let pointsPerCSSPixel: CGFloat = 72.0 / 96.0
+
   let pageRect: CGRect
   let contentRect: CGRect
+
+  /// The page size of the composed PDF, in points.
+  var pdfPageRect: CGRect {
+    CGRect(
+      x: 0, y: 0,
+      width: pageRect.width * Self.pointsPerCSSPixel,
+      height: pageRect.height * Self.pointsPerCSSPixel
+    )
+  }
 
   init(pageSize: CGSize, margins: PageMargins) {
     pageRect = CGRect(origin: .zero, size: pageSize)

@@ -7,13 +7,16 @@ enum PDFComposer {
     guard let consumer = CGDataConsumer(data: output as CFMutableData) else {
       throw PDFMercuryError.couldNotCreatePDF
     }
-    var mediaBox = pageLayout.pageRect
+    var mediaBox = pageLayout.pdfPageRect
     guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
       throw PDFMercuryError.couldNotCreatePDF
     }
 
     for page in pages {
       context.beginPDFPage(nil)
+      // WebKit snapshots map one CSS pixel to one PDF unit. Scale them so one
+      // CSS pixel becomes 0.75 pt, as in printing from a browser.
+      context.scaleBy(x: PageLayout.pointsPerCSSPixel, y: PageLayout.pointsPerCSSPixel)
       if let repeatedHeader = page.repeatedHeader {
         try draw(
           repeatedHeader,

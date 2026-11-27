@@ -89,8 +89,6 @@ final class PageFooterRenderer {
     guard height <= maximumHeight + 0.1 else {
       throw PDFMercuryError.invalidPageFooter("The footer changed height after pagination.")
     }
-    let configuration = WKPDFConfiguration()
-    configuration.rect = CGRect(x: 0, y: 0, width: width, height: height)
-    return (try await webView.pdf(configuration: configuration), height)
+    return (try await webView.pdfSnapshot(of: CGRect(x: 0, y: 0, width: width, height: height)), height)
   }
 }
